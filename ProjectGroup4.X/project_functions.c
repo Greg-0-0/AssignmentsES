@@ -381,7 +381,6 @@ int tmr_wait_period(int timer){
     return temp;
 }
 
-// Function to setup and expire a timer with provided ms (max 200)
 void tmr_wait_ms(int timer, int ms){
     tmr_setup_period(timer, ms);
     if (timer == TIMER1) {
@@ -449,22 +448,18 @@ void PWM_set(int speed, int yaw){
 void DC_assigning(int DC1, int DC2, int DC3, int DC4){
         
     OC1R = DC1; // PWM duty cycle
-    //OC1RS = 7200; // PWM period 10kHz
     
     OC2R = DC2; // PWM duty cycle
-    //OC2RS = 7200; // PWM period 10kHz
     
     OC3R = DC3; // PWM duty cycle
-    //OC3RS = 7200; // PWM period 10kHz
     
     OC4R = DC4; // PWM duty cycle
-    //OC4RS = 7200; // PWM period 10kHz
 }
 
 unsigned int spi_write(unsigned int data){
     // writing data provided
     while(SPI1STATbits.SPITBF == 1); // wait until Tx buffer is empty
-    SPI1BUF = data; // send data (could be greater than a byte)
+    SPI1BUF = data; // send data
     
     // reading answer
     while(SPI1STATbits.SPIRBF == 0); // wait until Rx buffer is full
@@ -526,7 +521,7 @@ int parse_byte(parser_state* ps, char byte) {
 				ps->msg_payload[0] = '\0'; // no payload
                 return NEW_MESSAGE;
             } else {
-                ps->msg_type[ps->index_type] = byte; // ok!
+                ps->msg_type[ps->index_type] = byte; // good byte
                 ps->index_type++; // increment for the next time;
             }
             break;
@@ -539,7 +534,7 @@ int parse_byte(parser_state* ps, char byte) {
                 ps->state = STATE_DOLLAR;
                 ps->index_payload = 0;
             } else {
-                ps->msg_payload[ps->index_payload] = byte; // ok!
+                ps->msg_payload[ps->index_payload] = byte; // good byte
                 ps->index_payload++; // increment for the next time;
             }
             break;
@@ -576,8 +571,8 @@ int next_value(const char* msg, int i) {
 	return i;
 }
 
-// Parses one message (assumed correct structurer is $PCREF,speed,yaw*) $PCREF,70,0*
 void task_read_speed_yaw(void* param){
+    // Parses one message, assumed correct structurer is $PCREF,speed,yaw* EX: $PCREF,70,0*
     // frequency of 500Hz
     control_data *cd = (control_data*) param;
     
@@ -606,7 +601,7 @@ void task_read_speed_yaw(void* param){
         // correct protocol and payload is not empty (smallest size is 3) (index_payload points at \0)
         
         // extracting values //
-        counter = 0; // to know which value is being read
+        counter = 0; // to know which value is being read (speed or yaw)
         int i = 0, j = 0;
         char temp[5]; // to store string value (dim = maximum value length + \0)
         while(i < cd->par_state->index_payload && counter < 2){
@@ -642,30 +637,32 @@ void task_PWM_set(void* param){
             break;
         case OBSTACLE_AVOIDANCE_STATE:
             if(cd->obs_av_state_ctrl == 3){
+                // maximum obstacle avoidance activations reached
                 cd->robot_state = HALTED_STATE;
                 cd->robot_sub_state = AVOIDANCE_STEP_0;
             }
             switch(cd->robot_sub_state){
                 case AVOIDANCE_STEP_0:
+                    // dummy state: used when not in obstacle avoidance mode for major protection
                     break;
                 case AVOIDANCE_STEP_1:
-                    // rotate 90� clockwise (triggered in task_reading_IR_value)
+                    // rotate 90째 clockwise (triggered in task_reading_IR_value)
                     
-                    // - Saving current yaw to later check when stop rotation (done in task_reading_magn_acc_gyro)
-                    // - Keeping count of three maximum executions
                     if(!cd->one_time_exec){
                         // Gyro value and the number of executions need to be registered only during first execution of this case
-                        // (task is periodic)
+                        // (task_PWM_set is periodic with frequency 500Hz)
                         cd->one_time_exec = 1;
+                        
+                        // - Saving current yaw to later check when stop rotation (done in task_reading_magn_acc_gyro)
+                        // - Keeping count of three maximum executions
                         cd->ctrl_yaw = cd->gyro_yaw;
                         cd->obs_av_state_ctrl++;
                     }
-                    //PWM_set(50,-50); // left_pwm = 100, right_pwm = 0 -> sharp rotation to the right
-                    PWM_set(50,-100);
+                    PWM_set(50,-100); // sharp rotation to the right
                     break;
                 case AVOIDANCE_STEP_2:
                     // moving forward for two seconds
-                    PWM_set(70,0); // left_pwm = 70, right_pwm = 70
+                    PWM_set(70,0); // go straight with speed 70 and yaw 0
                     
                     // enabling task that expires after two seconds
                     if(!cd->one_time_exec){
@@ -676,11 +673,11 @@ void task_PWM_set(void* param){
                     }
                     break;
                 case AVOIDANCE_STEP_3:
-                    // rotate 90� anti-clockwise (later add gyroscope)
-                    //PWM_set(50,60); // left_pwm = 0, right_pwm = 100 -> sharp rotation to the left
-                    PWM_set(50,100);
+                    // rotate 90째 anti-clockwise (later add gyroscope)
+                    PWM_set(50,100);  // sharp rotation to the left
                     break;
                 case AVOIDANCE_STEP_4:
+                    // dummy state: used to check if after obstacle avoidance manoeuvre the robot is in a safe state to move forward again
                     break;
             }
             break;
@@ -688,15 +685,18 @@ void task_PWM_set(void* param){
 }
 
 void task_stop_buggy_after_2sec (void* param){
+    // aperiodic task that is enabled only when the robot is moving forward after rotating 90째 clockwise (AVOIDANCE_STEP_2)
+
     control_data *cd = (control_data*) param;
-    
+    // after two seconds, the robot must stop moving and rotate anti-clockwise
     cd->robot_sub_state = AVOIDANCE_STEP_3;
     cd->schedInfo[2].enable = 0;
     cd->one_time_exec = 0;
 }
 
 void task_button_check(void* param){
-    // frequency of 10Hz (not required)
+    // frequency of 10Hz (polling buttons)
+
     control_data *cd = (control_data*) param;
     if(button_E8_pressed == 1){
         button_E8_pressed = 0;
@@ -728,8 +728,9 @@ void task_button_check(void* param){
     }
 }
 
-void task_reading_VBAT_n_sending_to_uart(){
+void task_reading_VBAT_n_sending_to_uart(void* param){
     // frequency of 1Hz (to send, not considering separate frequency for reading since no requirements in project specs)
+
     double v_batt = 0.0;
     int AN11_value = 0;
     
@@ -759,6 +760,7 @@ void task_reading_VBAT_n_sending_to_uart(){
 
 void task_reading_IR_value(void* param){
     // frequency of 500Hz
+
     control_data *cd = (control_data*) param;
     double Vsensor = 0.0;
     int AN14_value = 0;
@@ -785,21 +787,31 @@ void task_reading_IR_value(void* param){
     
     if(cd->robot_state != HALTED_STATE){
         if(distance <= 35 && cd->robot_state == MOVING_STATE && cd->obs_av_state_ctrl < 3){
-            // obstacle closer than 20 centimetres
+            // obstacle closer than 35 centimetres
+
             cd->robot_state = OBSTACLE_AVOIDANCE_STATE;
-            cd->robot_sub_state = AVOIDANCE_STEP_1; // first phase (rotating of 90�)
+            cd->robot_sub_state = AVOIDANCE_STEP_1; // first phase (rotating of 90째)
         }
         else if(distance <= 35 && cd->robot_sub_state == AVOIDANCE_STEP_4){
+            // obstacle closer than 35 centimetres after obstacle avoidance manoeuvre (after rotating of 90째 anti-clockwise)
+
             if(cd->obs_av_state_ctrl == 3){
+                // maximum obstacle avoidance activations reached
+
                 cd->robot_state = HALTED_STATE;
                 cd->robot_sub_state = AVOIDANCE_STEP_0;
                 cd->obs_av_state_ctrl = 0;
             }
             else{
+                // obstacle avoidance manoeuvre must be repeated
+
                 cd->robot_sub_state = AVOIDANCE_STEP_1;
             }
         }
         else if(distance <= 35 && cd->robot_sub_state == AVOIDANCE_STEP_2){
+            // during moving forward after rotating of 90째 clockwise, the robot is too close to the obstacle -> 
+            // must stop moving and rotate anti-clockwise
+
             cd->robot_state = HALTED_STATE;
             cd->robot_sub_state = AVOIDANCE_STEP_0;
             cd->obs_av_state_ctrl = 0;
@@ -808,6 +820,8 @@ void task_reading_IR_value(void* param){
             cd->one_time_exec = 0;
         }
         else if(distance > 35 && cd->robot_sub_state == AVOIDANCE_STEP_4){
+            // obstacle avoidance manoeuvre completed successfully -> robot can move again
+
             cd->robot_state = MOVING_STATE;
             cd->robot_sub_state = AVOIDANCE_STEP_0;
         }
@@ -832,7 +846,7 @@ void task_sending_IR_value_to_uart(void* param){
 }
 
 void task_buggy_lights(void* param){
-    // frequency of 1Hz
+    // frequency of 1Hz (500ms on, 500ms off)
     control_data *cd = (control_data*) param;
     
     LATAbits.LATA0 = !LATAbits.LATA0;
@@ -871,16 +885,14 @@ void task_reading_magn_acc_gyro(void* param){
     cd->angle_values[1] = (int)(atan2(-values[0], sqrt((long)values[1] * (long)values[1] + (long)values[2] * (long)values[2])) * (180.0 / 3.14));
     
     // Reading x,y,z magnetometer values //
-    // remember to reset the buggy with red button to make magnetometer work
     values[0] = get_magnetometer_value(0x42);
     values[1] = get_magnetometer_value(0x44);
         
     // Computing yaw with magnetometer values //
-    // magnetic field of motor wheels may disturb it
     cd->angle_values[2] = (int)(atan2(values[1], values[0]) * 180.0 / 3.14);
     
     // Reading z gyroscope value //
-    // useful to compute yaw
+    // magnetic field of motor wheels may disturb magnetometer readings, using yaw component from gyroscope in obstacle avoidance mechanic for better precision
     unsigned int output_1;
     unsigned int output_2;
     LATBbits.LATB4 = 0;
@@ -906,14 +918,6 @@ void task_reading_magn_acc_gyro(void* param){
     if(cd->gyro_yaw <= -180.0f){
         cd->gyro_yaw += 360.0f;
     }
-    
-    /*
-     gz may introduce drift -> progressive cumulative bias,
-     in that case we can combine with yaw from magnetometer:
-     final_yaw = 0.98f * (final_yaw + gz_dps * dt) + 0.02f * yaw_mag;
-     
-     using this instead of previous formula: float yaw += gz_dps * dt;
-     */
    
     // If in avoidance obstacle mode, checking if rotation has to stop //
     if(cd->robot_sub_state == AVOIDANCE_STEP_1){
@@ -923,7 +927,7 @@ void task_reading_magn_acc_gyro(void* param){
         while(diff < -180.0f) diff += 360.0f;
         
         if(fabs(diff) >= 87.0f){ 
-            // buggy rotated of 90� clockwise -> next step
+            // buggy rotated of 90째 clockwise -> next step
             cd->robot_sub_state = AVOIDANCE_STEP_2;
             cd->one_time_exec = 0; // AVOIDANCE_STEP_1 exited (gyro value won't be registered again before next OBSTACLE_AVOIDANCE_STATE)
         }
@@ -931,13 +935,14 @@ void task_reading_magn_acc_gyro(void* param){
     else if(cd->robot_sub_state == AVOIDANCE_STEP_3){
         
         float diff = cd->gyro_yaw - cd->ctrl_yaw;
+        // to ensure that the difference is always in the range [-180;180] (to avoid problems with 0째/360째 transition)
         while(diff > 180.0f) diff -= 360.0f;
         while(diff < -180.0f) diff += 360.0f;
         
         if(fabs(diff) <= 3.0f ){ 
-            // buggy rotated back of 90� anti-clockwise to previous heading
+            // buggy rotated back of 90째 anti-clockwise to previous heading
             cd->robot_sub_state = AVOIDANCE_STEP_4; // must check if distance is still under threshold,
-            // or if maximum obstacle avoidance executions have been reached
+                                                    // or if maximum obstacle avoidance executions have been reached
         }
     }
 }

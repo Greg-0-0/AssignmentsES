@@ -31,8 +31,6 @@
 #define SIZERX 8 // Rx buffer size -> with baud rate = 9600
 // the maximum amount of char received in a single control loop cycle (500Hz -> 2 ms) is ~1.92
 
-// #define SIZERX 16 // buffer emptied every 15ms -> baud rate = 9600 -> at maximum 14 char received
-
 typedef struct {
     char* buffer; 
     int size;
@@ -58,15 +56,12 @@ typedef struct {
 	char msg_payload[10];  // assume payload cannot be longer than 10 chars
 	int index_type;
 	int index_payload;
-} parser_state; 
+} parser_state;
 
 // --- Scheduler data --- //
 #define MAX_TASKS 10
-// PWM updated (500Hz), IR sensor voltage read (10Hz), battery voltage read (1Hz)
-// buggy lights blinking (1Hz for movement or static light), E8 press - E9 press (busy checking or interrupt), 
-// accelerometer values - magnetometer values + roll/pitch/yaw computation (can be grouped -> all at 10Hz ),
-// TX over UART
 
+// data structure used to define information for tasks
 typedef struct {
     int n;
     int N;
@@ -99,12 +94,12 @@ typedef struct{
     float gyro_yaw;
     float ctrl_yaw; // used to carry out obstacle avoidance policy
     int one_time_exec; // used to ensure that variables like ctrl_yaw, obs_av_state_ctrl are updated only once
-    // inside their corresponding case in task_PWM_set(periodic task)
+                       // inside their corresponding case in task_PWM_set(periodic task)
     heartbeat *schedInfo;
     parser_state *par_state;
 }control_data;
 
-// Global variable //
+// Global variables //
 extern volatile int AN11_value;
 extern volatile int AN14_value;
 extern volatile int button_E8_pressed;
@@ -112,16 +107,20 @@ extern volatile int button_E9_pressed;
 
 void device_init();
 
+// Auxiliary functions //
+// buffer management methods
 void buffer_init(volatile CircularBuffer* cb, char* array_ptr, int max_size);
 int buffer_is_empty(volatile CircularBuffer* cb);
 int buffer_write(volatile CircularBuffer* cb, char c);
 int buffer_read(volatile CircularBuffer* cb, char* c);
 int buffer_occupancy(volatile CircularBuffer* cb);
 
+// timer management methods
 void tmr_setup_period(int timer, int ms);
 int tmr_wait_period(int timer);
 void tmr_wait_ms(int timer, int ms);
 
+// helper functions
 int parse_byte(parser_state* ps, char byte);
 int next_value(const char* msg, int i);
 int extract_integer(const char* str);
@@ -130,11 +129,12 @@ void DC_assigning(int RD1, int RD2, int RD3, int RD4);
 unsigned int spi_write(unsigned int data);
 int get_accelerometer_value(unsigned int adr);
 
+// task functions
 void task_read_speed_yaw(void* param);
 void task_PWM_set(void* param);
 void task_stop_buggy_after_2sec (void* param);
 void task_button_check(void* param);
-void task_reading_VBAT_n_sending_to_uart();
+void task_reading_VBAT_n_sending_to_uart(void* param);
 void task_reading_IR_value(void* param);
 void task_sending_IR_value_to_uart(void* param);
 void task_buggy_lights(void* param);
